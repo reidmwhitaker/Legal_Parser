@@ -12,8 +12,11 @@ def parse(data):
 
 #todo: Note footnote numbering may not be seperated from the first word of the footnote. May cause issues if footnote is solely a citation
 #todo: recusials
-#todo: joinings & seperate opinions
+#todo: joinings & seperate opinions ... looks for need to see how consistently it works
 def parse_CAP(data):
+    data = re.sub(r'(\D)(\u00ad)(\D)', r'\1\3',data)
+    data = re.sub(r'(\D)(\-)(\D)', r'\1\3',data)
+
     soup = BeautifulSoup(data, "xml")
 
     def try_add_2_json(json_2_b,name,tag_to_try):
@@ -71,19 +74,14 @@ def parse_CAP(data):
                     json_2_b['opinion_text_' + str(count_opinions)] = json_2_b['opinion_text_' + str(count_opinions)] + " " + string
         count_opinions = count_opinions + 1
 
-    n = 1
-    while n < count_opinions:
-        json_2_b['opinion_text_' + str(n)] = re.sub(r'(\D)\u00ad(\D)', r'\1\2', json_2_b['opinion_text_' + str(n)])
-        n = n+1
-
     m = 1
     while m < count_opinions:
-        matches = re.findall(r'JUSTICE\s(\w+)\sjoins|(?:Chief\sJustice\s(\w+?)\sand\s)?(?:Justices\s(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\sand\s)?(\w+?)\sconcurred',json_2_b['opinion_text_' + str(m)],re.IGNORECASE)
+        matches = re.findall(r'JUSTICE\s(\w+)\sjoins|(?:Chief\sJustice\s(\w+?)\sand\s)?(?:Justices\s(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,?\sand\s)?(\w+?)\sconcurred',json_2_b['opinion_text_' + str(m)],re.IGNORECASE)
         if matches:
             join_count = 1
             for match in matches:
                 for group in match:
-                    if group != "":
+                    if group != "" and group != "specially":
                         json_2_b['opinion_' + str(m) + '_joining_' + str(join_count)] = group
                         #print(json_2_b['opinion_' + str(m) + '_joining_' + str(join_count)])
                         join_count = join_count + 1
