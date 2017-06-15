@@ -2,6 +2,7 @@
 import os
 from bs4 import BeautifulSoup
 import json
+import re
 
 def parse(data):
     if "HLS-CASELAW-CASEXML" in data:
@@ -9,11 +10,20 @@ def parse(data):
     if '"resource_uri": http://www.courtlistener.com/api/rest/v3/opinions/' in data:
         parse_CL(data)
 
-#todo: footnotes
+#todo: Note footnote numbering may not be seperated from the first word of the footnote. May cause issues if footnote is solely a citation
 #todo: recusials
 #todo: joinings & seperate opinions
 def parse_CAP(data):
     soup = BeautifulSoup(data, "xml")
+
+    def try_add_2_json(json_2_b,name,tag_to_try):
+        try:
+            tag_to_try
+        except:
+            pass
+        else:
+            json_2_b[name]=tag_to_try
+        return json_2_b
 
     json_2_b={}
     case_id = soup.case['caseid']
@@ -46,11 +56,38 @@ def parse_CAP(data):
     count_opinions = 1
     for tag in soup.find_all('opinion'):
         json_2_b['opinion_type_' + str(count_opinions)] = tag['type']
-        json_2_b['author_' + str(count_opinions)] = tag.author.string
-        json_2_b['opinion_text' + str(count_opinions)] = ""
-        for p_tag in tag:
-            json_2_b['opinion_text' + str(count_opinions)] = json_2_b['opinion_text' + str(count_opinions)] + " " + p_tag.string
+        try:
+            tag.author.string
+        except:
+            pass
+        else:
+            json_2_b['opinion_' + str(count_opinions)+ "_author"] = tag.author.string
+        json_2_b['opinion_text_' + str(count_opinions)] = ""
+        for p_tag in tag.find_all('p'):
+            if p_tag.string is not None:
+                json_2_b['opinion_text_' + str(count_opinions)] = json_2_b['opinion_text_' + str(count_opinions)] + " " + p_tag.string
+            else:
+                for string in p_tag.stripped_strings:
+                    json_2_b['opinion_text_' + str(count_opinions)] = json_2_b['opinion_text_' + str(count_opinions)] + " " + string
         count_opinions = count_opinions + 1
+
+    n = 1
+    while n < count_opinions:
+        json_2_b['opinion_text_' + str(n)] = re.sub(r'(\D)\u00ad(\D)', r'\1\2', json_2_b['opinion_text_' + str(n)])
+        n = n+1
+
+    m = 1
+    while m < count_opinions:
+        matches = re.findall(r'JUSTICE\s(\w+)\sjoins|(?:Chief\sJustice\s(\w+?)\sand\s)?(?:Justices\s(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\s)?(?:(\w+)\,\sand\s)?(\w+?)\sconcurred',json_2_b['opinion_text_' + str(m)],re.IGNORECASE)
+        if matches:
+            join_count = 1
+            for match in matches:
+                for group in match:
+                    if group != "":
+                        json_2_b['opinion_' + str(m) + '_joining_' + str(join_count)] = group
+                        #print(json_2_b['opinion_' + str(m) + '_joining_' + str(join_count)])
+                        join_count = join_count + 1
+        m = m+1
 
     json_out = json.dumps(json_2_b, indent=4, separators=(',', ': '))
     os.makedirs("./../parsed_cases_CAP/", exist_ok=True)
@@ -105,7 +142,7 @@ def parse_CL(json_CL):
         doc.write(opinion.opinion_text)
         doc.close()
 
-def get_dir(dir="./../Parser_Cases"):
+def get_dir(dir="./../Illinois_CAP_Sample"):
     return dir
 
 #todo: develop algorithm to split opinion clusters
@@ -145,12 +182,16 @@ def daubert_Test():
     daubert.cite = cites
 
 def main():
-    print("start")
+    #print("start")
     dir = get_dir()
-    for file in os.listdir(dir):
-        data = open(dir + "/" + file).read()
-        parse(data)
-    print("end")
+    for root, dirs, files in os.walk(dir):
+        for file in files:
+            #For testing purposes
+            #print(os.path.join(root,file))
+            if not file.startswith("."):
+                data = open(os.path.join(root,file)).read()
+                parse(data)
+    #print("end")
 
 if __name__ == "__main__":
     main()
