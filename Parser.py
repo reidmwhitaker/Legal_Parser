@@ -4,6 +4,9 @@ from bs4 import BeautifulSoup
 import json
 import re
 import warnings
+import requests
+import nltk
+from requests.auth import HTTPBasicAuth
 
 #determines how a document should be parsed and send the data to the appropriate parser
 #Currently supports .xml files from the Library Innovation Lab's Caselaw Access Project
@@ -58,6 +61,7 @@ def parse_CAP(data):
     name_tag = soup.find('name')
     json_2_b['case_name'] = name_tag.string
     case_name_short = name_tag['abbreviation']
+    case_name_short = case_name_short.replace("/","--")
     json_2_b['case_name_short'] = case_name_short
     count_attorneys = 1
     #Collect attorney information
@@ -115,25 +119,49 @@ def parse_CAP(data):
         #        join_count + 1
         m = m+1
 
+    full_text = ""
+    k = 1
+    while k < count_opinions:
+        full_text = full_text + json_2_b['opinion_text_' + str(k)]
+        k = k+1
+
+    json_2_b['full_opinion_text']=full_text
+    json_2_b['length']=len(nltk.word_tokenize(full_text))
+
     json_out = json.dumps(json_2_b, indent=4, separators=(',', ': '))
-    os.makedirs("./../parsed_cases_CAP/", exist_ok=True)
-    doc = open("./../parsed_cases_CAP/" + case_id + "_" + case_name_short + ".json", 'w')
+    out_dir = get_out_dir()
+    os.makedirs(out_dir, exist_ok=True)
+    doc = open(out_dir + case_id + "_" + case_name_short + ".json", 'w')
     doc.write(json_out)
     doc.close()
 
 def parse_CL(json_CL):
     #todo: fill out all available and relevant metadata
-    #print("checkpoint")
+    user = "Reidmwhitaker"
+    password = "courtlistenerwhitaker"
+
     warnings.filterwarnings('ignore',
                             message=r".*looks like a URL. Beautiful Soup is not an HTTP client. You should probably.*")
     data = json.loads(json_CL)
-    cluster = BeautifulSoup(data['cluster'], 'html.parser').text
-    id = re.match(r"http://www.courtlistener.com/api/rest/v3/clusters/(\d+)", cluster)
+    cluster = BeautifulSoup(data['cluster'], 'html.parser').text.replace("http://","https://")
+    id = re.match(r"https://www.courtlistener.com/api/rest/v3/clusters/(\d+)", cluster)
     case_id=id.group(1)
 
     absolute = BeautifulSoup(data['absolute_url'], 'html.parser').text
-    name = re.match(r"/opinion/(\d+)/(.*)/", absolute)
-    name = name.group(1) + "_" + name.group(2)
+    name_match = re.match(r"/opinion/(\d+)/(.*)/", absolute)
+    case_name = name_match.group(2)
+
+    cluster_response = requests.get(cluster, auth=(user,password))
+    cluster_json=cluster_response.json()
+    #print(cluster_json)
+
+    try:
+        BeautifulSoup(data['author'], 'html.parser').text
+    except:
+        pass
+    else:
+        author_respose = requests.get(BeautifulSoup(data['author'], 'html.parser').text.replace("http://","https://"),auth=(user,password))
+        author_json=author_respose.json()
 
     if data['html'] != "":
         text = BeautifulSoup(data['html'],'html.parser')
@@ -142,6 +170,7 @@ def parse_CL(json_CL):
         text = BeautifulSoup(data['html_with_citations'], 'html.parser')
 
     cites = []
+    #todo:fix get citations
     for tag in text.find_all('p', class_='case_cite'):
         cites.append(tag.text)
 
@@ -150,27 +179,53 @@ def parse_CL(json_CL):
     for tag in reduced_soup:
         opinion_text_soup = tag.find_all('p', class_="indent")
         for tag in opinion_text_soup:
-            opinion_text = opinion_text + tag.prettify()
+        #Note, for speed gains you can directly prettify the tags here,
+        #  but it leaves formatting tags in the final version which may cause prblems
+            for string in tag.stripped_strings:
+                opinion_text = opinion_text + " " + string
 
     # todo: fix footnote parsing...make sure linked footnotes are present
     footnotes = text.find_all('div', class_="footnote", id=re.compile("^fn\d+"))
     for tag in footnotes:
-        opinion_text = opinion_text + tag.prettify()
+        for string in tag.stripped_strings:
+            opinion_text = opinion_text + " " + string
 
     json_2_b = {}
-    json_2_b['opinion_text_1']=opinion_text
-    json_2_b['cite']=cites
-    json_2_b['name']=name
     json_2_b['id']=case_id
+    json_2_b['case_name'] = cluster_json['case_name']
+    json_2_b['case_name_short'] = cluster_json['case_name_short']
+    json_2_b['case_name_short'] = json_2_b['case_name_short'].replace("/","--")
+    json_2_b['scdb_id'] = cluster_json['scdb_id']
+    #todo:fix above
+    try:
+        cites[0]
+    except:
+        pass
+    else:
+        json_2_b['citation_1'] = cites[0]
+    json_2_b['decision_date']=cluster_json['date_filed']
+    try:
+        author_json['slug']
+    except:
+        pass
+    else:
+        json_2_b['author'] = author_json['slug']
+
+    json_2_b['opinion_text_1']=opinion_text
     json_out = json.dumps(json_2_b, indent=4, separators=(',', ': '))
-    os.makedirs("./parsed_cases", exist_ok=True)
-    doc = open("./parsed_cases/" + case_id + "_" + name + ".json", 'w')
+    out_dir = get_out_dir()
+    out_dir = out_dir + "CL/"
+    os.makedirs(out_dir, exist_ok=True)
+    doc = open(out_dir + case_id + "_" + json_2_b['case_name_short'] + ".json", 'w')
     doc.write(json_out)
     doc.close()
-    #print(json_out)
 
 #Get the directory where the cases to be parsed are stored
-def get_dir(dir="./../Parser_Cases"):
+def get_dir(dir="./../CAP_data"):
+    #dir="./../Parser_Cases"
+    return dir
+
+def get_out_dir(dir="/Volumes/WD My Passport/LILProject/CAP_data_parsed/"):
     return dir
 
 #todo: develop algorithm to split opinion clusters
@@ -212,7 +267,7 @@ def daubert_Test():
 #Loads files and sends each file to the parser
 def main():
     #print("start")
-    dir = get_dir()
+    dir = get_dir(dir="/Volumes/WD My Passport/LILProject/CAP_data")
     for root, dirs, files in os.walk(dir):
         for file in files:
             #For testing purposes
